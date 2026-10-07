@@ -20,6 +20,13 @@ variable "name" {
   default = "simple-reporting"
 }
 
+variable "query_api_key" {
+  type        = string
+  default     = ""
+  sensitive   = true
+  description = "If set, GET /metrics requires this in the x-api-key header (the dashboard prompts for it)."
+}
+
 variable "ingest_api_key" {
   type      = string
   default   = ""
@@ -216,7 +223,11 @@ locals {
     serving = {
       handler = "serving.handler.handler"
       timeout = 15
-      env     = { BATCH_TABLE = aws_dynamodb_table.batch.name, SPEED_TABLE = aws_dynamodb_table.speed.name }
+      env = {
+        BATCH_TABLE   = aws_dynamodb_table.batch.name
+        SPEED_TABLE   = aws_dynamodb_table.speed.name
+        QUERY_API_KEY = var.query_api_key
+      }
     }
   }
 }

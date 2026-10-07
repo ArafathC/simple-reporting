@@ -4,6 +4,7 @@ Both the speed layer and the batch layer use `to_delta` / `hour_bucket`, so
 the two views of the data agree by construction.
 """
 import json
+import re
 import uuid
 from datetime import datetime, timezone
 
@@ -14,6 +15,9 @@ _METRIC_FOR_TYPE = {
     "add_to_cart": "add_to_carts",
     "purchase": "orders",
 }
+
+
+_DIM_RE = re.compile(r"[A-Za-z0-9_.-]{1,64}")
 
 
 class ValidationError(ValueError):
@@ -37,8 +41,14 @@ def validate(raw: dict, now: datetime | None = None) -> dict:
     for field in ("user_id", "session_id"):
         if raw.get(field) is not None and not isinstance(raw[field], str):
             raise ValidationError(f"{field} must be a string")
+    for field in ("product_id", "channel"):
+        if raw.get(field) is not None and not (
+                isinstance(raw[field], str) and _DIM_RE.fullmatch(raw[field])):
+            raise ValidationError(f"{field} must match [A-Za-z0-9_.-]{{1,64}}")
     record = {
         "event_id": event_id,
+        "product_id": raw.get("product_id"),
+        "channel": raw.get("channel"),
         "event_type": event_type,
         "user_id": raw.get("user_id"),
         "session_id": raw.get("session_id"),
@@ -68,18 +78,35 @@ def to_delta(record: dict) -> dict:
     return delta
 
 
-def aggregate(records) -> dict:
-    """Fold events into {hour_bucket: {metric: total}}, de-duplicated by event_id."""
-    out: dict[str, dict[str, int]] = {}
+def dimension_keys(record: dict) -> list[str]:
+    """Partition keys an event contributes to: always 'global', plus any dimensions."""
+    keys = ["global"]
+    if record.get("channel"):
+        keys.append(f"channel#{record['channel']}")
+    if record.get("product_id"):
+        keys.append(f"product#{record['product_id']}")
+    return keys
+
+
+def aggregate_by_key(records) -> dict:
+    """Fold events into {pk: {hour_bucket: {metric: total}}}, de-duplicated by event_id."""
+    out: dict[str, dict[str, dict[str, int]]] = {}
     seen: set[str] = set()
     for rec in records:
         if rec["event_id"] in seen:
             continue
         seen.add(rec["event_id"])
-        bucket = out.setdefault(hour_bucket(rec["received_at"]), dict.fromkeys(METRICS, 0))
-        for metric, n in to_delta(rec).items():
-            bucket[metric] += n
+        hour = hour_bucket(rec["received_at"])
+        for pk in dimension_keys(rec):
+            bucket = out.setdefault(pk, {}).setdefault(hour, dict.fromkeys(METRICS, 0))
+            for metric, n in to_delta(rec).items():
+                bucket[metric] += n
     return out
+
+
+def aggregate(records) -> dict:
+    """Global-only view: {hour_bucket: {metric: total}}."""
+    return aggregate_by_key(records).get("global", {})
 
 
 def parse_lines(blob: str):

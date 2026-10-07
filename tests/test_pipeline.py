@@ -89,3 +89,32 @@ def test_batch_and_merge(aws):
     # A backfill from earlier must not move the watermark backwards.
     run(s3, aws["batch"], "raw", T(12, 10), start=T(9))
     assert aws["batch"].get_item(Key={"pk": "meta", "sk": "watermark"})["Item"]["hour"] == "2026-10-07T10"
+
+
+def test_dimensions_end_to_end(aws):
+    s3 = aws["s3"]
+    s3.create_bucket(Bucket="raw")
+    recs = [ev("a", channel="email", product_id="p1"),
+            ev("b", "purchase", amount_cents=700, channel="email", product_id="p1"),
+            ev("c", "purchase", amount_cents=300, channel="ads", product_id="p2")]
+    with pytest.raises(ValidationError):
+        validate({"event_type": "page_view", "channel": "bad channel!"})
+    put_raw(s3, "raw/dt=2026-10-07/hour=10/a", recs)
+    run(s3, aws["batch"], "raw", T(12, 10), start=T(10))
+    q = lambda **p: metrics({"from": "2026-10-07T10:00:00Z", "to": "2026-10-07T10:30:00Z", **p},
+                            aws["batch"], aws["speed"], now=T(12, 10))["totals"]
+    assert q()["revenue_cents"] == 1000
+    assert q(channel="email")["revenue_cents"] == 700
+    assert q(product_id="p2")["orders"] == 1
+    for r in recs:  # speed layer writes the same dimension keys
+        apply_record(aws["speed"], r)
+    assert aws["speed"].get_item(Key={"pk": "channel#ads", "sk": "2026-10-07T10"})["Item"]["revenue_cents"] == 300
+
+
+def test_query_key(aws, monkeypatch):
+    from serving.handler import handler as serve
+    monkeypatch.setenv("QUERY_API_KEY", "k")
+    ev_ = {"rawPath": "/metrics", "headers": {}}
+    assert serve(ev_, None, aws["batch"], aws["speed"])["statusCode"] == 401
+    ev_["headers"] = {"x-api-key": "k"}
+    assert serve(ev_, None, aws["batch"], aws["speed"])["statusCode"] == 200

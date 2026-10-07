@@ -13,6 +13,8 @@
   .speed{color:#b45309}.batch{color:#047857}
 </style>
 <h1>Last 24 hours</h1>
+<p>Filter: channel <input id="channel" size="10"> product <input id="product" size="10">
+<button onclick="load()">Apply</button></p>
 <p id="meta">Loading…</p>
 <div class="tiles" id="tiles"></div>
 <table><thead><tr><th>Hour (UTC)</th><th>Views</th><th>Carts</th><th>Orders</th><th>Revenue</th><th>Source</th></tr></thead>
@@ -20,7 +22,17 @@
 <script>
 const money = c => (c/100).toLocaleString(undefined,{style:'currency',currency:'USD'});
 async function load(){
-  const r = await fetch('metrics'); const d = await r.json(); const t = d.totals;
+  let key = sessionStorage.getItem('key') || '';
+  const q = new URLSearchParams();
+  for (const [id, name] of [['channel','channel'],['product','product_id']]) {
+    const v = document.getElementById(id).value.trim(); if (v) q.set(name, v);
+  }
+  let r = await fetch('metrics?' + q, {headers: {'x-api-key': key}});
+  if (r.status === 401) {
+    key = prompt('API key') || ''; sessionStorage.setItem('key', key);
+    r = await fetch('metrics?' + q, {headers: {'x-api-key': key}});
+  }
+  if (!r.ok) { document.getElementById('meta').textContent = 'Error ' + r.status; return; } const d = await r.json(); const t = d.totals;
   document.getElementById('meta').textContent =
     'Batch watermark: ' + (d.watermark||'none') + ' · hours after it are real-time (speed layer)';
   document.getElementById('tiles').innerHTML = [

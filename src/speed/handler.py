@@ -10,7 +10,7 @@ import time
 
 import boto3
 
-from common.events import hour_bucket, to_delta
+from common.events import dimension_keys, hour_bucket, to_delta
 
 SEEN_TTL_S = 2 * 24 * 3600
 VIEW_TTL_S = 14 * 24 * 3600  # batch view takes over long before this
@@ -34,13 +34,14 @@ def apply_record(table, rec: dict, now: int | None = None) -> bool:
     names = {f"#m{i}": m for i, m in enumerate(delta)}
     values = {f":v{i}": n for i, n in enumerate(delta.values())}
     values[":ttl"] = now + VIEW_TTL_S
-    table.update_item(
-        Key={"pk": "global", "sk": hour_bucket(rec["received_at"])},
-        UpdateExpression="ADD " + ", ".join(f"#m{i} :v{i}" for i in range(len(delta)))
-        + " SET #ttl = :ttl",
-        ExpressionAttributeNames={**names, "#ttl": "ttl"},
-        ExpressionAttributeValues=values,
-    )
+    for pk in dimension_keys(rec):
+        table.update_item(
+            Key={"pk": pk, "sk": hour_bucket(rec["received_at"])},
+            UpdateExpression="ADD " + ", ".join(f"#m{i} :v{i}" for i in range(len(delta)))
+            + " SET #ttl = :ttl",
+            ExpressionAttributeNames={**names, "#ttl": "ttl"},
+            ExpressionAttributeValues=values,
+        )
     return True
 
 

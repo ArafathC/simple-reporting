@@ -15,7 +15,7 @@ from datetime import datetime, timedelta, timezone
 
 import boto3
 
-from common.events import METRICS, aggregate, hour_bucket, parse_lines
+from common.events import METRICS, aggregate_by_key, hour_bucket, parse_lines
 
 HOUR_FMT = "%Y-%m-%dT%H"
 
@@ -50,10 +50,12 @@ def run(s3, table, bucket: str, now: datetime, max_hours: int = 48, start: datet
     while len(done) < max_hours and next_hour + timedelta(hours=2) <= now:
         # (`now` >= end of H+1)
         records = list(read_hour(s3, bucket, next_hour))
-        buckets = aggregate(records)
+        by_key = aggregate_by_key(records)
         key = next_hour.strftime(HOUR_FMT)
-        row = buckets.get(key, dict.fromkeys(METRICS, 0))
-        table.put_item(Item={"pk": "global", "sk": key, **row})
+        by_key.setdefault("global", {}).setdefault(key, dict.fromkeys(METRICS, 0))
+        for pk, buckets in by_key.items():
+            if key in buckets:
+                table.put_item(Item={"pk": pk, "sk": key, **buckets[key]})
         if not item or key > item["hour"]:  # a backfill must never move the watermark back
             item = {"pk": "meta", "sk": "watermark", "hour": key}
             table.put_item(Item=item)
