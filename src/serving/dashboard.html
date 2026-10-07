@@ -1,0 +1,36 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Simple Reporting</title>
+<style>
+  body{font:15px system-ui,sans-serif;margin:0 auto;max-width:960px;padding:16px;color:#222}
+  .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
+  .tile{border:1px solid #ddd;border-radius:8px;padding:12px}
+  .tile b{display:block;font-size:24px}
+  table{width:100%;border-collapse:collapse;margin-top:16px}
+  td,th{padding:4px 8px;border-bottom:1px solid #eee;text-align:right}
+  td:first-child,th:first-child{text-align:left}
+  .speed{color:#b45309}.batch{color:#047857}
+</style>
+<h1>Last 24 hours</h1>
+<p id="meta">Loading…</p>
+<div class="tiles" id="tiles"></div>
+<table><thead><tr><th>Hour (UTC)</th><th>Views</th><th>Carts</th><th>Orders</th><th>Revenue</th><th>Source</th></tr></thead>
+<tbody id="rows"></tbody></table>
+<script>
+const money = c => (c/100).toLocaleString(undefined,{style:'currency',currency:'USD'});
+async function load(){
+  const r = await fetch('metrics'); const d = await r.json(); const t = d.totals;
+  document.getElementById('meta').textContent =
+    'Batch watermark: ' + (d.watermark||'none') + ' · hours after it are real-time (speed layer)';
+  document.getElementById('tiles').innerHTML = [
+    ['Page views',t.page_views],['Add to carts',t.add_to_carts],['Orders',t.orders],
+    ['Revenue',money(t.revenue_cents)],['AOV',money(t.avg_order_value_cents)],
+    ['Cart→order',(t.cart_to_order_rate*100).toFixed(1)+'%']
+  ].map(([k,v])=>`<div class="tile">${k}<b>${v}</b></div>`).join('');
+  document.getElementById('rows').innerHTML = d.series.slice().reverse().map(p=>
+    `<tr><td>${p.hour}</td><td>${p.page_views}</td><td>${p.add_to_carts}</td><td>${p.orders}</td>`+
+    `<td>${money(p.revenue_cents)}</td><td class="${p.source}">${p.source}</td></tr>`).join('');
+}
+load(); setInterval(load, 30000);
+</script>
